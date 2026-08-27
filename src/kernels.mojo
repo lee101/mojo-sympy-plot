@@ -1,6 +1,5 @@
 """Fused SIMD evaluation of plotting expressions over caller-owned grids."""
 
-from std.algorithm import parallelize
 from std.math import (
     abs,
     acos,
@@ -27,8 +26,8 @@ from std.math import (
 )
 from std.sys.info import num_physical_cores, simd_width_of as simdwidthof
 
-comptime FPtr = UnsafePointer[Float64, AnyOrigin[mut=True]]
-comptime IPtr = UnsafePointer[Int64, AnyOrigin[mut=True]]
+comptime FPtr = Pointer[Float64, AnyOrigin[mut=True]]
+comptime IPtr = Pointer[Int64, AnyOrigin[mut=True]]
 comptime W = simdwidthof[DType.float64]()
 comptime MAX_STACK = 64
 comptime PARALLEL_ELEMENTS = 262_144
@@ -110,22 +109,24 @@ def evaluate_chunk[width: Int](
     y: FPtr,
     index: Int,
 ) -> SIMD[DType.float64, width]:
-    var stack = InlineArray[SIMD[DType.float64, width], MAX_STACK](
+    var stack = Array[SIMD[DType.float64, width], MAX_STACK](
         fill=SIMD[DType.float64, width](0.0)
     )
     var sp = 0
     for pc in range(code_count):
-        var op = Int(code[pc * 2])
-        var argument = Int(code[pc * 2 + 1])
+        var op = Int(code.unsafe_load(pc * 2))
+        var argument = Int(code.unsafe_load(pc * 2 + 1))
         if op == 1:
             stack[sp] = (
-                x.load[width=width](index)
+                x.unsafe_load[width=width](index)
                 if argument == 0
-                else y.load[width=width](index)
+                else y.unsafe_load[width=width](index)
             )
             sp += 1
         elif op == 2:
-            stack[sp] = SIMD[DType.float64, width](constants[argument])
+            stack[sp] = SIMD[DType.float64, width](
+                constants.unsafe_load(argument)
+            )
             sp += 1
         elif op == 10:
             sp -= 1
@@ -316,8 +317,8 @@ def msp_evaluate(
     var destination = FPtr(unsafe_from_address=dst_addr)
     var depth = 0
     for pc in range(code_count):
-        var op = Int(code[pc * 2])
-        var argument = Int(code[pc * 2 + 1])
+        var op = Int(code.unsafe_load(pc * 2))
+        var argument = Int(code.unsafe_load(pc * 2 + 1))
         if op == 1:
             if argument < 0 or argument >= variable_count:
                 return 2
@@ -362,21 +363,23 @@ def msp_evaluate(
     var unary_op = 0
     var fast_unary = False
     if code_count == 2:
-        unary_op = Int(code[2])
+        unary_op = Int(code.unsafe_load(2))
         fast_unary = (
-            Int(code[0]) == 1
+            Int(code.unsafe_load(0)) == 1
             and (
                 (unary_op >= 20 and unary_op <= 22)
                 or (unary_op >= 40 and unary_op <= 45)
                 or (unary_op >= 47 and unary_op <= 60)
             )
         )
-    var unary_input = x if Int(code[1]) == 0 else y
+    var unary_input = (
+        x if Int(code.unsafe_load(1)) == 0 else y
+    )
     if n < PARALLEL_ELEMENTS:
         workers = 1
     workers = max(workers, 1)
 
-    @parameter
+    @__parameter
     def process(worker: Int):
         var vectors = n // W
         var start = (worker * vectors // workers) * W
@@ -386,30 +389,39 @@ def msp_evaluate(
         var i = start
         while i + W <= end:
             if fast_unary:
-                destination.store(
+                destination.unsafe_store(
                     i,
                     apply_unary[W](
-                        unary_op, unary_input.load[width=W](i)
+                        unary_op,
+                        unary_input.unsafe_load[width=W](i),
                     ),
                 )
             else:
-                destination.store(
-                    i, evaluate_chunk[W](code, code_count, constants, x, y, i)
+                destination.unsafe_store(
+                    i,
+                    evaluate_chunk[W](code, code_count, constants, x, y, i),
                 )
             i += W
         while i < end:
             if fast_unary:
-                destination[i] = apply_unary[1](
-                    unary_op, unary_input.load[width=1](i)
-                )[0]
+                destination.unsafe_store(
+                    i,
+                    apply_unary[1](
+                        unary_op,
+                        unary_input.unsafe_load[width=1](i),
+                    )[0],
+                )
             else:
-                destination[i] = evaluate_chunk[1](
-                    code, code_count, constants, x, y, i
-                )[0]
+                destination.unsafe_store(
+                    i,
+                    evaluate_chunk[1](
+                        code, code_count, constants, x, y, i
+                    )[0],
+                )
             i += 1
 
-    if workers > 1:
-        parallelize[process](workers, workers)
-    else:
-        process(0)
+    # `parallelize` moved out of the Mojo standard library in 1.1. Keep the
+    # worker partitioning ABI intact and execute each partition synchronously.
+    for worker in range(workers):
+        process(worker)
     return 0
