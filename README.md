@@ -94,14 +94,14 @@ the same expression, range, and sample count.
 
 | case | mojo-sympy-plot | SymPy | ratio | result |
 | --- | ---: | ---: | ---: | --- |
-| identity line, 1M | 10.03 ms | 314.90 ms | 31.41x | faster |
-| default sine line, 1k | 0.23 ms | 1.17 ms | 5.12x | faster |
-| simple line, 1M | 14.10 ms | 576.66 ms | 40.89x | faster |
-| complex line, 1M | 28.64 ms | 2412.97 ms | 84.25x | faster |
-| piecewise line, 1M | 30.55 ms | 21597.78 ms | 707.07x | faster |
-| parametric 3D line, 1M | 44.98 ms | 3188.96 ms | 70.90x | faster |
-| surface, 1200x1200 | 44.10 ms | 3550.74 ms | 80.51x | faster |
-| simple surface, 1200x1200 | 18.45 ms | 820.66 ms | 44.47x | faster |
+| identity line, 1M | 12.38 ms | 300.41 ms | 24.27x | faster |
+| default sine line, 1k | 0.08 ms | 1.02 ms | 12.31x | faster |
+| simple line, 1M | 30.17 ms | 646.94 ms | 21.44x | faster |
+| complex line, 1M | 140.58 ms | 2695.65 ms | 19.18x | faster |
+| piecewise line, 1M | 89.33 ms | 21633.19 ms | 242.16x | faster |
+| parametric 3D line, 1M | 143.71 ms | 4375.71 ms | 30.45x | faster |
+| surface, 1200x1200 | 193.40 ms | 4046.19 ms | 20.92x | faster |
+| simple surface, 1200x1200 | 25.57 ms | 1031.39 ms | 40.34x | faster |
 
 These results particularly favor fused evaluation. SymPy's NumPy path creates
 intermediate arrays and converts evaluated results through complex arrays so it can
@@ -110,7 +110,9 @@ in SIMD registers and writes one final float64 array. Results will vary by expre
 sample count, CPU, and thread count; simple plots with only a few hundred points are
 dominated by Python and FFI overhead.
 
-No GPU path is included.
+No GPU path is included. Every measured CPU case is already more than 5x faster
+than upstream, so none is an optimization target; adding GPU transfers, allocation,
+and dispatch to these kernels is not justified by the measured comparison.
 
 ## How it works
 
